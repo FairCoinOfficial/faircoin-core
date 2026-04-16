@@ -1,0 +1,64 @@
+{
+  "name": "@fairco.in/core",
+  "version": "0.1.0",
+  "description": "FairCoin protocol primitives: HD wallets, transactions, P2PKH scripts, address encoding. Pure TypeScript, no React Native.",
+  "author": "FairCoin <dev@fairco.in>",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "bun run clean && bun run build"
+  },
+  "dependencies": {
+    "@noble/hashes": "^1.8.0",
+    "@noble/secp256k1": "^2.2.3",
+    "@scure/bip32": "^1.7.0",
+    "@scure/bip39": "^1.6.0",
+    "bs58": "^6.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "@types/bun": "latest"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/FairCoinOfficial/faircoin-core.git"
+  },
+  "homepage": "https://github.com/FairCoinOfficial/faircoin-core#readme",
+  "bugs": {
+    "url": "https://github.com/FairCoinOfficial/faircoin-core/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "faircoin",
+    "cryptocurrency",
+    "bitcoin-fork",
+    "hd-wallet",
+    "bip32",
+    "bip39",
+    "bip44"
+  ]
+}
