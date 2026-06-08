@@ -189,8 +189,19 @@ describe("base58Check", () => {
   });
 
   test("rejects too-short input", () => {
-    // Encoding of 3 bytes — only 3 bytes total, less than the 5-byte minimum
-    expect(() => base58CheckDecode("Ldp")).toThrow();
+    // Decodes to 3 bytes total — less than the 4-byte minimum (0-byte
+    // payload + 4-byte checksum), so it must still be rejected.
+    expect(() => base58CheckDecode("Ldp")).toThrow(/too short/i);
+  });
+
+  test("round trips a 0-byte payload", () => {
+    // A valid Base58Check value is just a 4-byte checksum over an empty
+    // payload. The old `< 5` guard rejected this, breaking the round trip.
+    const payload = new Uint8Array(0);
+    const encoded = base58CheckEncode(payload);
+    const decoded = base58CheckDecode(encoded);
+    expect(decoded.length).toBe(0);
+    expect(decoded).toEqual(payload);
   });
 });
 

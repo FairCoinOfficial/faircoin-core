@@ -1,6 +1,6 @@
 {
   "name": "@fairco.in/core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "FairCoin protocol primitives: HD wallets, transactions, P2PKH scripts, address encoding. Pure TypeScript, no React Native.",
   "author": "FairCoin <dev@fairco.in>",
   "license": "MIT",

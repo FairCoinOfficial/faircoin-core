@@ -63,7 +63,10 @@ export function base58CheckEncode(payload: Uint8Array): string {
 
 export function base58CheckDecode(encoded: string): Uint8Array {
   const data = bs58.decode(encoded);
-  if (data.length < 5) {
+  // Minimum is 4 bytes: a 0-byte payload followed by its 4-byte checksum.
+  // (The previous `< 5` guard rejected the valid 0-length-payload case, so
+  // `base58CheckEncode(new Uint8Array(0))` did not round-trip.)
+  if (data.length < 4) {
     throw new Error("Base58Check: input too short");
   }
   const payload = data.slice(0, data.length - 4);
