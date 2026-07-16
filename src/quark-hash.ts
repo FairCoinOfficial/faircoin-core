@@ -452,41 +452,26 @@ function bmw512CompressBig(
     [15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30],   // 31
   ];
 
-  // M16_j: i0m, i1m, i3m, i4m, i7m, i10m, i11m
-  const M16: readonly (readonly number[])[] = [
-    [0, 1, 3, 4, 7, 10, 11],     // 16
-    [1, 2, 4, 5, 8, 11, 12],     // 17
-    [2, 3, 5, 6, 9, 12, 13],     // 18
-    [3, 4, 6, 7, 10, 13, 14],     // 19
-    [4, 5, 7, 8, 11, 14, 15],     // 20
-    [5, 6, 8, 9, 12, 15, 0],     // 21  (wraps around: 16 mod 16 = 0)
-    [6, 7, 9, 10, 13, 0, 1],     // 22
-    [7, 8, 10, 11, 14, 1, 2],     // 23
-    [8, 9, 11, 12, 15, 2, 3],     // 24
-    [9, 10, 12, 13, 0, 3, 4],     // 25
-    [10, 11, 13, 14, 1, 4, 5],     // 26
-    [11, 12, 14, 15, 2, 5, 6],     // 27
-    [12, 13, 15, 0, 3, 6, 7],     // 28  (wraps: 16 mod 16 = 0)
-    [13, 14, 0, 1, 4, 7, 8],     // 29
-    [14, 15, 1, 2, 5, 8, 9],     // 30
-    [15, 0, 2, 3, 6, 9, 10],     // 31  (wraps: 16 mod 16 = 0)
-  ];
-
+  // add_elt_b(j) from the SPH reference, computed directly from the expansion
+  // index so there is no lookup table to get out of sync:
+  //   rol_off(off) = ROTL64( M[(j+off) & 15], ((j+off) & 15) + 1 )
+  //   add_elt_b(j) = ( rol_off(0) + rol_off(3) - rol_off(10) + Kb(j+16) ) ^ H[(j+7) & 15]
+  // The rotation amount is ((j+off) & 15) + 1, which reaches 16 on the wrap
+  // rows (a rotate-by-16, NOT by 0) — the reason a mod-16 lookup table was
+  // wrong. `j16` is the qt index (16..31); the reference `j` is `j16 - 16`.
   function addEltB(j16: number): bigint {
-    const idx = j16 - 16;
-    const mi = M16[idx];
-    // i0m, i1m (rotation amount = i1m), i3m, i4m (rotation amount = i4m),
-    // i7m, i10m (rotation amount = i11m), i11m
-    const i0m = mi[0];
-    const i1m = mi[1];
-    const i3m = mi[2];
-    const i4m = mi[3];
-    const i7m = mi[4];
-    const i10m = mi[5];
-    const i11m = mi[6];
+    const j = j16 - 16;
+    const m0 = (j + 0) & 15;
+    const m3 = (j + 3) & 15;
+    const m10 = (j + 10) & 15;
+    const h7 = (j + 7) & 15;
     return t64(
-      t64(rotl64(M(i0m), i1m + 1) + rotl64(M(i3m), i4m + 1) - rotl64(M(i10m), i11m + 1) + Kb(j16))
-      ^ H(i7m),
+      t64(
+        rotl64(M(m0), m0 + 1)
+        + rotl64(M(m3), m3 + 1)
+        - rotl64(M(m10), m10 + 1)
+        + Kb(j16),
+      ) ^ H(h7),
     );
   }
 
@@ -660,18 +645,21 @@ function buildGroestlTable(): bigint[] {
     return r;
   }
 
-  // Build T0 table (big-endian convention)
+  // Build the SPH `T0` table exactly as the reference groestl.c (SPH_GROESTL_64
+  // path). The MixBytes column, in MSB..LSB byte order, is [2,7,5,3,5,4,3,2] of
+  // S(x) — NOT [2,2,3,4,5,3,5,7]. This is the byte order that pairs with the
+  // ROTR-based row combine below; e.g. T0[0x00] == 0xc632f4a5f497a5c6.
   const table = new Array<bigint>(256);
   for (let x = 0; x < 256; x++) {
     const s = SBOX[x];
     const b0 = gfMul(s, 2);
-    const b1 = gfMul(s, 2);
-    const b2 = gfMul(s, 3);
-    const b3 = gfMul(s, 4);
+    const b1 = gfMul(s, 7);
+    const b2 = gfMul(s, 5);
+    const b3 = gfMul(s, 3);
     const b4 = gfMul(s, 5);
-    const b5 = gfMul(s, 3);
-    const b6 = gfMul(s, 5);
-    const b7 = gfMul(s, 7);
+    const b5 = gfMul(s, 4);
+    const b6 = gfMul(s, 3);
+    const b7 = gfMul(s, 2);
     table[x] = (BigInt(b0) << 56n) | (BigInt(b1) << 48n) | (BigInt(b2) << 40n)
              | (BigInt(b3) << 32n) | (BigInt(b4) << 24n) | (BigInt(b5) << 16n)
              | (BigInt(b6) << 8n)  | BigInt(b7);
@@ -690,11 +678,14 @@ function groestlRound(
   // AddRoundConstant
   for (let i = 0; i < numCols; i++) {
     if (isP) {
-      // PC64(j, r) = (j + r) << 56 (big-endian)
+      // PC64(j, r) = ((j) + (r)) << 56 — column constant j = i*0x10 in the MSB
+      // (row 0), matching the reference SPH_GROESTL_64 path.
       state[i] ^= BigInt((i << 4) + roundNum) << 56n;
     } else {
-      // QC64(j, r) = r << 56 ^ ~(j << 56) - but in big endian
-      state[i] ^= t64(0xFFFFFFFFFFFFFFFFn ^ (BigInt(i) << 56n)) ^ (BigInt(roundNum) << 56n);
+      // QC64(j, r) = r ^ ~j (full 64-bit, NOT shifted): every byte is 0xff
+      // except the LSB (row 7), which holds 0xff ^ (i*0x10) ^ r. The previous
+      // code placed the column/round bits in the MSB, which is wrong.
+      state[i] ^= t64(0xFFFFFFFFFFFFFFFFn ^ BigInt(i << 4)) ^ BigInt(roundNum);
     }
   }
 
@@ -710,8 +701,10 @@ function groestlRound(
       const srcCol = (col + shifts[row]) % numCols;
       const byteVal = Number((state[srcCol] >> BigInt((7 - row) * 8)) & 0xFFn);
       const tval = GROESTL_T0[byteVal];
-      // Rotate the T-table entry by row positions
-      val ^= rotl64(tval, row * 8);
+      // Reference RBTT uses R64 = SPH_ROTR64 (rows 0..3 from T0, rows 4..7 from
+      // T4 = ROTR(T0,32)); with a single T0 that is ROTR by row*8. Must be ROTR,
+      // not ROTL — the two are not equivalent for this reflected T0 layout.
+      val ^= rotr64(tval, row * 8);
     }
     temp[col] = t64(val);
   }
@@ -726,9 +719,11 @@ function groestl512(data: Uint8Array): Uint8Array {
   const BLOCK_SIZE = 128; // 1024 bits for 512-bit variant
   const NUM_ROUNDS = 14;
 
-  // Initialize state: H[NUM_COLS-1] has the output size in bits
+  // Initialize state: the last column holds the output size (512) as a plain
+  // big-endian 64-bit integer — reference `state.wide[15] = out_size` — i.e.
+  // 0x0000000000000200, NOT 512 << 56. (The value sits in the LSBs.)
   const hState = new Array<bigint>(NUM_COLS).fill(0n);
-  hState[NUM_COLS - 1] = BigInt(512) << 56n; // big-endian: 512 in byte 0
+  hState[NUM_COLS - 1] = 512n;
 
   let blockCount = 0n;
 

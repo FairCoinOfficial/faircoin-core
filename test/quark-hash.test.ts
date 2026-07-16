@@ -8,12 +8,16 @@
  * BLAKE-512 for @noble/hashes/blake1 — the tests now pass and act as a
  * regression guard against the bug re-appearing.
  *
- * NOTE: Quark also chains custom implementations of BMW-512, Groestl-512,
- * JH-512, Skein-512, and Keccak-512. Only Keccak is vendored from
- * @noble/hashes; the rest are pure-TS ports that have not been verified
- * against the reference C implementation. These tests prove that the
- * algorithm is input-sensitive and data-deterministic, but they do NOT
- * prove the output matches the FairCoin C reference. See SPV_AUDIT.md.
+ * Quark chains BLAKE-512, BMW-512, Groestl-512, JH-512, Keccak-512, and
+ * Skein-512. Every stage has been verified byte-for-byte against the FairCoin
+ * C reference (src/crypto/*.c → HashQuark). Two bugs were fixed in the process:
+ *   - BMW-512 `add_elt_b` double-counted the rotation offset (+1 twice).
+ *   - Groestl-512 used the wrong T-table byte order, rotated left instead of
+ *     right, placed the Q round constant in the MSB instead of the LSB, and
+ *     seeded the IV with 512<<56 instead of 512.
+ * The `reference block ids` test below locks this in: `hashBlockHeader` must
+ * reproduce real mainnet block hashes (genesis, the first PoW blocks, and a
+ * PoS-era block), which is only possible if the whole Quark chain is correct.
  */
 
 import { describe, test, expect } from "bun:test";
@@ -179,6 +183,48 @@ describe("quarkHash correctness", () => {
       bytesToHex(hashBlockHeader(b)),
     );
   });
+});
+
+// ---------------------------------------------------------------------------
+// quarkHash — reference block ids (the real acceptance test)
+//
+// hashBlockHeader() must reproduce actual FairCoin mainnet block hashes. This
+// only passes if BLAKE/BMW/Groestl/JH/Keccak/Skein AND the conditional Quark
+// routing are all byte-exact against the C reference. Hashes fetched from
+// explorer.fairco.in; header fields are the canonical (display) hex, reversed
+// to internal byte order for prevHash/merkleRoot.
+// ---------------------------------------------------------------------------
+
+describe("quarkHash reference block ids", () => {
+  const reverse = (b: Uint8Array): Uint8Array => b.slice().reverse();
+  const realBlocks: ReadonlyArray<{
+    id: string;
+    version: number;
+    prev: string;
+    merkle: string;
+    time: number;
+    bits: number;
+    nonce: number;
+  }> = [
+    { id: "00000232cb134567cf85cd65748714df75d72fe4ce71cf77d3c3f8a9a1a576e6", version: 1, prev: "0000000000000000000000000000000000000000000000000000000000000000", merkle: "9645f9761cc7212b2c8c79bcb2713a10d6e54623b24a8425b7bef2f16200a863", time: 1744156800, bits: 0x1e0ffff0, nonce: 1299007 },
+    { id: "00000c7be1164f34a243d233c94ec23e6fdc76813ac94b720a624d4ed52c9f0c", version: 3, prev: "00000232cb134567cf85cd65748714df75d72fe4ce71cf77d3c3f8a9a1a576e6", merkle: "8f3627a4d4d2b331093af4a98950a34ce176ee15616faa8d6e8a17375b96a03a", time: 1775716724, bits: 0x1e0fffff, nonce: 176 },
+    { id: "00000249d1a699df65c397d848a7c71932243fc94463256e9bb3fe290985335b", version: 3, prev: "00000c7be1164f34a243d233c94ec23e6fdc76813ac94b720a624d4ed52c9f0c", merkle: "745c590e9aa96f20633f606aa6e682f76b406096a4c967b575a6ba73b891eea9", time: 1775716725, bits: 0x1e0fffff, nonce: 160 },
+    { id: "4ebe8bf5fa04f9e8143ec441f84eb9cea482693ec7a54cd18d66b9b5d925232b", version: 3, prev: "193c40867eba6f4b19ce06fa3dc2c1da6164ea45a6145ce70295abe74192f5f9", merkle: "f9aee8962cb5ac61ed682f9a7ecbfabb99c0ac52c74be30d7a909e203897e698", time: 1784145480, bits: 0x1b0c07bb, nonce: 0 },
+  ];
+
+  for (const b of realBlocks) {
+    test(`block ${b.id.slice(0, 12)}… hashes correctly`, () => {
+      const internal = hashBlockHeader({
+        version: b.version,
+        prevHash: reverse(hexToBytes(b.prev)),
+        merkleRoot: reverse(hexToBytes(b.merkle)),
+        timestamp: b.time,
+        bits: b.bits,
+        nonce: b.nonce,
+      });
+      expect(bytesToHex(reverse(internal))).toBe(b.id);
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------
