@@ -1,9 +1,9 @@
 {
   "name": "@fairco.in/core",
   "version": "0.2.0",
-  "description": "FairCoin protocol primitives: HD wallets, transactions, P2PKH scripts, address encoding. Pure TypeScript, no React Native.",
+  "description": "FairCoin protocol primitives: HD wallets, transactions, P2PKH + P2SH multisig scripts, address encoding. Pure TypeScript, no React Native.",
   "author": "FairCoin <dev@fairco.in>",
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -59,6 +59,8 @@
     "hd-wallet",
     "bip32",
     "bip39",
-    "bip44"
+    "bip44",
+    "multisig",
+    "p2sh"
   ]
 }
