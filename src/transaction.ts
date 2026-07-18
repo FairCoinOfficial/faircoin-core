@@ -229,7 +229,7 @@ function derEncodeInteger(n: bigint): Uint8Array {
  * DER-encode an ECDSA signature from r and s bigints.
  * Format: 0x30 <total len> 0x02 <r len> <r> 0x02 <s len> <s>
  */
-function derEncodeSignature(r: bigint, s: bigint): Uint8Array {
+export function derEncodeSignature(r: bigint, s: bigint): Uint8Array {
   const rEnc = derEncodeInteger(r);
   const sEnc = derEncodeInteger(s);
   const totalLen = rEnc.length + sEnc.length;
