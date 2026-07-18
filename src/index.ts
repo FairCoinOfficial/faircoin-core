@@ -17,6 +17,7 @@ export {
 export {
   hexToBytes,
   bytesToHex,
+  bytesEqual,
   base58CheckEncode,
   base58CheckDecode,
   encodeAddress,
@@ -61,6 +62,9 @@ export {
 
 export {
   createMultisigRedeemScript,
+  type ParsedMultisigRedeemScript,
+  parseMultisigRedeemScript,
+  readMultisigThreshold,
   multisigAddress,
 } from "./multisig-script.js";
 

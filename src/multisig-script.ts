@@ -77,6 +77,80 @@ export function createMultisigRedeemScript(m: number, pubkeys: Uint8Array[]): Ui
   return result;
 }
 
+/** A redeem script parsed back into its threshold and ordered pubkeys. */
+export interface ParsedMultisigRedeemScript {
+  /** Required-signature threshold (`m` in m-of-n). */
+  m: number;
+  /** The cosigner pubkeys, in the exact order they appear in the script. */
+  pubkeys: Uint8Array[];
+}
+
+/**
+ * Parse an m-of-n redeem script produced by `createMultisigRedeemScript` back
+ * into its threshold `m` and ordered pubkeys, validating the full
+ * `OP_m <pubkey1>...<pubkeyN> OP_n OP_CHECKMULTISIG` structure and the
+ * `1 <= m <= n <= 16` bounds. Throws on any malformed script. This is the
+ * inverse of `createMultisigRedeemScript` and the single source of truth for
+ * reading a redeem script's parameters (fee estimation and signature
+ * assembly both derive `m` from here rather than trusting a passed-in value).
+ */
+export function parseMultisigRedeemScript(redeemScript: Uint8Array): ParsedMultisigRedeemScript {
+  if (redeemScript.length < 3) {
+    throw new Error("Redeem script too short to be a multisig script");
+  }
+  const mOpcode = redeemScript[0];
+  if (mOpcode < Opcodes.OP_1 || mOpcode > Opcodes.OP_16) {
+    throw new Error("Redeem script does not start with a valid OP_m");
+  }
+  const m = mOpcode - Opcodes.OP_1 + 1;
+
+  const pubkeys: Uint8Array[] = [];
+  let offset = 1;
+  while (offset < redeemScript.length) {
+    const next = redeemScript[offset];
+    if (next >= Opcodes.OP_1 && next <= Opcodes.OP_16) {
+      if (
+        offset + 2 !== redeemScript.length ||
+        redeemScript[offset + 1] !== Opcodes.OP_CHECKMULTISIG
+      ) {
+        throw new Error("Malformed multisig redeem script");
+      }
+      const n = next - Opcodes.OP_1 + 1;
+      if (n !== pubkeys.length) {
+        throw new Error(
+          `Redeem script declares n=${n} but contains ${pubkeys.length} pubkey pushes`,
+        );
+      }
+      if (m > n) {
+        throw new Error(`Invalid multisig redeem script: m=${m} cannot exceed n=${n}`);
+      }
+      return { m, pubkeys };
+    }
+
+    const len = next;
+    if (len === 0 || len >= Opcodes.OP_PUSHDATA1) {
+      throw new Error("Malformed multisig redeem script: expected a pubkey push");
+    }
+    if (offset + 1 + len > redeemScript.length) {
+      throw new Error("Malformed multisig redeem script: truncated pubkey push");
+    }
+    pubkeys.push(redeemScript.slice(offset + 1, offset + 1 + len));
+    offset += 1 + len;
+  }
+
+  throw new Error("Malformed multisig redeem script: missing OP_n OP_CHECKMULTISIG tail");
+}
+
+/**
+ * Read just the required-signature threshold `m` from a redeem script. A thin
+ * wrapper over `parseMultisigRedeemScript` for callers (fee estimation) that
+ * only need `m` -- it still fully validates the script, so a malformed or
+ * mismatched script can never silently yield a wrong threshold.
+ */
+export function readMultisigThreshold(redeemScript: Uint8Array): number {
+  return parseMultisigRedeemScript(redeemScript).m;
+}
+
 /**
  * Derive the P2SH address for a redeem script: `hash160(redeemScript)`
  * encoded with the network's script-hash version byte.

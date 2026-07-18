@@ -130,6 +130,30 @@ describe("assembleMultisigScriptSig", () => {
       /not part of this redeem script/,
     );
   });
+
+  test("rejects an under-signed set: 1 signature for a 2-of-3", () => {
+    // OP_CHECKMULTISIG needs exactly m=2 signatures; a single one assembles
+    // into a scriptSig that looks spendable but is rejected at broadcast.
+    const sig1: PartialSignature = {
+      pubkey: PUB1,
+      signature: signMultisigInput(fixtureTx(), 0, REDEEM_SCRIPT, PRIV1),
+    };
+    expect(() => assembleMultisigScriptSig([sig1], REDEEM_SCRIPT)).toThrow(/Expected exactly 2/);
+  });
+
+  test("rejects two signatures from the SAME cosigner for a 2-of-3", () => {
+    // Two distinct-looking entries that both resolve to PUB1 -- CHECKMULTISIG
+    // requires m=2 DISTINCT in-script signers, so this must not assemble.
+    const sig1a: PartialSignature = {
+      pubkey: PUB1,
+      signature: signMultisigInput(fixtureTx(), 0, REDEEM_SCRIPT, PRIV1),
+    };
+    const sig1b: PartialSignature = {
+      pubkey: PUB1,
+      signature: signMultisigInput(fixtureTx(), 0, REDEEM_SCRIPT, PRIV1),
+    };
+    expect(() => assembleMultisigScriptSig([sig1a, sig1b], REDEEM_SCRIPT)).toThrow(/Duplicate/);
+  });
 });
 
 describe("serializeMultisigSigningRequest / deserializeMultisigSigningRequest", () => {

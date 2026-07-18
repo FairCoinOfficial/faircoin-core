@@ -45,6 +45,19 @@ export function bytesToHex(bytes: Uint8Array): string {
   return hex;
 }
 
+/**
+ * Byte-array equality: true only when both arrays have the same length and
+ * identical bytes. NOT constant-time -- it is for comparing public values
+ * (e.g. scriptPubKeys), never secret material.
+ */
+export function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Base58Check
 // ---------------------------------------------------------------------------

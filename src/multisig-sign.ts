@@ -19,6 +19,7 @@
 import { sha256 } from "@noble/hashes/sha256";
 import * as secp256k1 from "@noble/secp256k1";
 import { bytesToHex, hexToBytes, BufferWriter } from "./encoding.js";
+import { parseMultisigRedeemScript } from "./multisig-script.js";
 import { Opcodes, pushData } from "./script.js";
 import {
   serializeTransaction,
@@ -94,56 +95,6 @@ export function signMultisigInput(
   return sigWithHashType;
 }
 
-/**
- * Parse the pubkeys (in order) out of a redeem script built by
- * `createMultisigRedeemScript`. Used by `assembleMultisigScriptSig` to order
- * signatures correctly -- OP_CHECKMULTISIG requires signatures in the SAME
- * relative order as their pubkeys appear in the script, even when signing a
- * strict subset (m < n).
- */
-function extractPubkeysFromMultisigRedeemScript(redeemScript: Uint8Array): Uint8Array[] {
-  if (redeemScript.length < 3) {
-    throw new Error("Redeem script too short to be a multisig script");
-  }
-  const mOpcode = redeemScript[0];
-  if (mOpcode < Opcodes.OP_1 || mOpcode > Opcodes.OP_16) {
-    throw new Error("Redeem script does not start with a valid OP_m");
-  }
-
-  const pubkeys: Uint8Array[] = [];
-  let offset = 1;
-  while (offset < redeemScript.length) {
-    const next = redeemScript[offset];
-    if (next >= Opcodes.OP_1 && next <= Opcodes.OP_16) {
-      if (
-        offset + 2 !== redeemScript.length ||
-        redeemScript[offset + 1] !== Opcodes.OP_CHECKMULTISIG
-      ) {
-        throw new Error("Malformed multisig redeem script");
-      }
-      const n = next - Opcodes.OP_1 + 1;
-      if (n !== pubkeys.length) {
-        throw new Error(
-          `Redeem script declares n=${n} but contains ${pubkeys.length} pubkey pushes`,
-        );
-      }
-      return pubkeys;
-    }
-
-    const len = next;
-    if (len === 0 || len >= Opcodes.OP_PUSHDATA1) {
-      throw new Error("Malformed multisig redeem script: expected a pubkey push");
-    }
-    if (offset + 1 + len > redeemScript.length) {
-      throw new Error("Malformed multisig redeem script: truncated pubkey push");
-    }
-    pubkeys.push(redeemScript.slice(offset + 1, offset + 1 + len));
-    offset += 1 + len;
-  }
-
-  throw new Error("Malformed multisig redeem script: missing OP_n OP_CHECKMULTISIG tail");
-}
-
 /** One cosigner's signature for a specific input, paired with their pubkey. */
 export interface PartialSignature {
   pubkey: Uint8Array;
@@ -152,10 +103,16 @@ export interface PartialSignature {
 }
 
 /**
- * Assemble the final P2SH multisig scriptSig from `m` (or more) partial
- * signatures: `OP_0 <sig>...<sig> <redeemScript>`. Signatures are reordered
- * to match their pubkeys' order in the redeem script -- callers do not need
- * to track cosigning order themselves.
+ * Assemble the final P2SH multisig scriptSig from EXACTLY `m` partial
+ * signatures: `OP_0 <sig>...<sig> <redeemScript>`. `m` is read from the
+ * redeem script, and every signature is matched to the pubkey it belongs to,
+ * so callers do not need to track cosigning order themselves. Signatures are
+ * emitted in the pubkeys' script order, as OP_CHECKMULTISIG requires.
+ *
+ * Rejects any set that OP_CHECKMULTISIG would reject at broadcast -- fewer or
+ * more than `m` signatures, two signatures from the SAME cosigner, or a
+ * signature whose pubkey is not in the script -- so an unspendable scriptSig
+ * is never produced from a partially- or wrongly-signed input.
  *
  * The leading OP_0 is MANDATORY: it is a dummy stack element that works
  * around a bug in Bitcoin's original OP_CHECKMULTISIG implementation (it
@@ -166,13 +123,14 @@ export function assembleMultisigScriptSig(
   signatures: PartialSignature[],
   redeemScript: Uint8Array,
 ): Uint8Array {
-  const pubkeyOrder = extractPubkeysFromMultisigRedeemScript(redeemScript).map(bytesToHex);
+  const { m, pubkeys } = parseMultisigRedeemScript(redeemScript);
+  const pubkeyOrder = pubkeys.map(bytesToHex);
 
-  // Resolve each signature's position via a `.map()` pass (which always
-  // visits every element) rather than inside the `.sort()` comparator --
-  // `Array.prototype.sort` never invokes its comparator for arrays of
-  // length 0 or 1, so a membership check placed there would silently skip
-  // validating a single foreign signature.
+  // Resolve each signature to the index of the pubkey it belongs to via a
+  // `.map()` pass (which always visits every element) rather than inside the
+  // `.sort()` comparator -- `Array.prototype.sort` never invokes its
+  // comparator for arrays of length 0 or 1, so a membership check placed
+  // there would silently skip validating a single foreign signature.
   const indexed = signatures.map((sig) => {
     const index = pubkeyOrder.indexOf(bytesToHex(sig.pubkey));
     if (index === -1) {
@@ -180,6 +138,22 @@ export function assembleMultisigScriptSig(
     }
     return { index, signature: sig.signature };
   });
+
+  // OP_CHECKMULTISIG consumes EXACTLY `m` signatures, one per DISTINCT
+  // cosigner. Two signatures from the same cosigner (duplicate index), or a
+  // count other than `m`, both assemble into a scriptSig that looks spendable
+  // but fails at broadcast -- catch it here, while the tx can still be
+  // re-signed, rather than after the funds appear to have moved.
+  const distinctSigners = new Set(indexed.map((entry) => entry.index));
+  if (distinctSigners.size !== indexed.length) {
+    throw new Error("Duplicate signatures from the same cosigner are not allowed");
+  }
+  if (indexed.length !== m) {
+    throw new Error(
+      `Expected exactly ${m} signatures for this ${m}-of-${pubkeys.length} multisig, got ${indexed.length}`,
+    );
+  }
+
   const ordered = indexed.sort((a, b) => a.index - b.index);
 
   const parts: Uint8Array[] = [new Uint8Array([Opcodes.OP_0])];

@@ -20,23 +20,32 @@ const MULTISIG_ADDRESS = multisigAddress(REDEEM_SCRIPT, MAINNET);
 const PUB2_ADDRESS = encodeAddress(hash160(PUB2), MAINNET.pubKeyHash);
 
 describe("estimateMultisigInputSize / estimateMultisigTxSize", () => {
-  test("matches the real assembled scriptSig size for a 2-of-3 spend (conservative upper bound)", () => {
+  test("derives m from the redeem script for a 2-of-3 spend (conservative upper bound)", () => {
     // multisig-sign.test.ts's real 2-of-3 scriptSig is 253 bytes (36 outpoint
     // + 3 varint + 253 scriptSig + 4 sequence = 296-byte input); the estimate
-    // sizes against the 72-byte DER max (not the actual 71/72-byte real
-    // signatures), so it must be >= the real input size.
-    expect(estimateMultisigInputSize(2, REDEEM_SCRIPT.length)).toBe(299);
-    expect(estimateMultisigInputSize(2, REDEEM_SCRIPT.length)).toBeGreaterThanOrEqual(
-      36 + 3 + 253 + 4,
-    );
+    // sizes against the 73-byte DER max (not the actual 71/72-byte real
+    // signatures), so it must be >= the real input size. m is read from the
+    // script itself, so a caller can no longer pass a wrong threshold.
+    expect(estimateMultisigInputSize(REDEEM_SCRIPT)).toBe(299);
+    expect(estimateMultisigInputSize(REDEEM_SCRIPT)).toBeGreaterThanOrEqual(36 + 3 + 253 + 4);
   });
 
   test("full tx size estimate for 1 input, 2 outputs", () => {
-    expect(estimateMultisigTxSize(1, 2, 2, REDEEM_SCRIPT.length)).toBe(377);
+    expect(estimateMultisigTxSize(1, 2, REDEEM_SCRIPT)).toBe(377);
   });
 
-  test("rejects a non-positive threshold", () => {
-    expect(() => estimateMultisigInputSize(0, REDEEM_SCRIPT.length)).toThrow();
+  test("the derived m tracks the script's threshold, not a passed argument", () => {
+    // Same three pubkeys => identical script length, so ONLY m differs. A
+    // 1-of-3 needs one fewer signature push than a 2-of-3, so its input
+    // estimate must be strictly smaller -- proving m comes from the script.
+    const oneOfThree = createMultisigRedeemScript(1, [PUB1, PUB2, PUB3]);
+    expect(oneOfThree.length).toBe(REDEEM_SCRIPT.length);
+    expect(estimateMultisigInputSize(oneOfThree)).toBe(223);
+    expect(estimateMultisigInputSize(REDEEM_SCRIPT)).toBe(299);
+  });
+
+  test("rejects a malformed redeem script", () => {
+    expect(() => estimateMultisigInputSize(new Uint8Array([0x51]))).toThrow();
   });
 });
 
@@ -51,7 +60,6 @@ describe("buildMultisigSpend", () => {
       },
     ],
     redeemScript: REDEEM_SCRIPT,
-    m: 2,
     recipients: [{ address: PUB2_ADDRESS, value: 4_000_000n }],
     changeAddress: MULTISIG_ADDRESS,
     feePerByte: 10n,
@@ -82,5 +90,26 @@ describe("buildMultisigSpend", () => {
 
   test("rejects an empty UTXO list", () => {
     expect(() => buildMultisigSpend({ ...baseParams, utxos: [] })).toThrow("No UTXOs provided");
+  });
+
+  test("throws when a UTXO's scriptPubKey does not match the redeem script's P2SH address", () => {
+    // A UTXO locked by a DIFFERENT redeem script (a 1-of-3 of the same keys)
+    // than baseParams.redeemScript (the 2-of-3). Signing against it would
+    // build a tx whose revealed redeem script can't hash to the output being
+    // spent -- silently unspendable.
+    const otherRedeemScript = createMultisigRedeemScript(1, [PUB1, PUB2, PUB3]);
+    expect(() =>
+      buildMultisigSpend({
+        ...baseParams,
+        utxos: [
+          {
+            txid: "cc".repeat(32),
+            vout: 0,
+            value: 10_000_000n,
+            scriptPubKey: createP2SHScript(hash160(otherRedeemScript)),
+          },
+        ],
+      }),
+    ).toThrow(/scriptPubKey does not match/);
   });
 });

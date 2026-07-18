@@ -5,8 +5,11 @@
  * inputs in one transaction, or inputs with DIFFERENT redeem scripts, is
  * out of scope for Layer 1.
  */
+import { hash160 } from "./address.js";
+import { bytesEqual } from "./encoding.js";
+import { readMultisigThreshold } from "./multisig-script.js";
 import type { NetworkConfig } from "./network.js";
-import { scriptForAddress } from "./script.js";
+import { createP2SHScript, scriptForAddress } from "./script.js";
 import { SMALLEST_UNIT_NAME } from "./branding.js";
 import type { Transaction, TxInput, TxOutput, UTXO } from "./transaction.js";
 
@@ -45,30 +48,31 @@ function varIntSize(n: number): number {
  * Estimate the byte size of ONE P2SH multisig input: outpoint(36) +
  * scriptSig-length varint + scriptSig + sequence(4). The scriptSig is
  * `OP_0 <sig>...<sig> <redeemScript>` (see `assembleMultisigScriptSig`).
+ *
+ * The threshold `m` is derived from `redeemScript` itself -- it is exactly
+ * `redeemScript[0] - OP_1 + 1` -- so a caller cannot pass a wrong `m` and
+ * under-fee (and thereby strand) the transaction.
  */
-export function estimateMultisigInputSize(m: number, redeemScriptLength: number): number {
-  if (!Number.isInteger(m) || m < 1) {
-    throw new Error(`Invalid multisig threshold m=${m}: must be a positive integer`);
-  }
+export function estimateMultisigInputSize(redeemScript: Uint8Array): number {
+  const m = readMultisigThreshold(redeemScript);
   const sigPushSize = pushSize(MAX_DER_SIG_WITH_HASHTYPE);
-  const redeemPushSize = pushSize(redeemScriptLength);
+  const redeemPushSize = pushSize(redeemScript.length);
   const scriptSigSize = 1 /* OP_0 dummy element */ + m * sigPushSize + redeemPushSize;
   return 36 + varIntSize(scriptSigSize) + scriptSigSize + 4;
 }
 
 /**
  * Estimate the byte size of a transaction whose inputs are ALL P2SH
- * multisig inputs sharing the same (m, redeem script length).
+ * multisig inputs locked by the same redeem script.
  */
 export function estimateMultisigTxSize(
   numInputs: number,
   numOutputs: number,
-  m: number,
-  redeemScriptLength: number,
+  redeemScript: Uint8Array,
 ): number {
   return (
     TX_OVERHEAD +
-    numInputs * estimateMultisigInputSize(m, redeemScriptLength) +
+    numInputs * estimateMultisigInputSize(redeemScript) +
     numOutputs * P2PKH_OUTPUT_SIZE
   );
 }
@@ -78,8 +82,6 @@ export interface BuildMultisigSpendParams {
   utxos: UTXO[];
   /** The shared redeem script that locks every UTXO above. */
   redeemScript: Uint8Array;
-  /** Required signature count (for fee estimation only; not enforced here). */
-  m: number;
   recipients: Array<{ address: string; value: bigint }>;
   /** Where any change goes -- typically the same multisig address. */
   changeAddress: string;
@@ -99,13 +101,25 @@ export interface BuildMultisigSpendParams {
  * produced via `signMultisigInput` (per cosigner) + `assembleMultisigScriptSig`.
  */
 export function buildMultisigSpend(params: BuildMultisigSpendParams): Transaction {
-  const { utxos, redeemScript, m, recipients, changeAddress, feePerByte, network } = params;
+  const { utxos, redeemScript, recipients, changeAddress, feePerByte, network } = params;
 
   if (utxos.length === 0) {
     throw new Error("No UTXOs provided");
   }
   if (recipients.length === 0) {
     throw new Error("No recipients provided");
+  }
+
+  // Every UTXO must be locked by THIS redeem script's P2SH address. Signing
+  // against a UTXO whose scriptPubKey belongs to some other script silently
+  // builds an unspendable transaction -- the redeem script we later reveal
+  // won't hash to the output being spent, so CHECKMULTISIG never runs. Reject
+  // any mismatch up front, before signing work begins.
+  const expectedScriptPubKey = createP2SHScript(hash160(redeemScript));
+  for (const utxo of utxos) {
+    if (!bytesEqual(utxo.scriptPubKey, expectedScriptPubKey)) {
+      throw new Error("UTXO scriptPubKey does not match redeemScript's P2SH address");
+    }
   }
 
   let totalIn = 0n;
@@ -124,16 +138,14 @@ export function buildMultisigSpend(params: BuildMultisigSpendParams): Transactio
   const sizeWithChange = estimateMultisigTxSize(
     utxos.length,
     recipients.length + 1,
-    m,
-    redeemScript.length,
+    redeemScript,
   );
   const feeWithChange = feePerByte * BigInt(sizeWithChange);
 
   const sizeWithoutChange = estimateMultisigTxSize(
     utxos.length,
     recipients.length,
-    m,
-    redeemScript.length,
+    redeemScript,
   );
   const feeWithoutChange = feePerByte * BigInt(sizeWithoutChange);
 
