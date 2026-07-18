@@ -11,7 +11,7 @@ import { describe, test, expect } from "bun:test";
 import { hexToBytes, bytesToHex, decodeAddress } from "../src/encoding.js";
 import { deriveAddress, mnemonicToSeed } from "../src/hd-wallet.js";
 import { MAINNET } from "../src/network.js";
-import { createP2PKHScript } from "../src/script.js";
+import { createP2PKHScript, isP2SHScript, isP2PKHScript } from "../src/script.js";
 import {
   buildTransaction,
   deserializeTransaction,
@@ -421,5 +421,51 @@ describe("estimateTxSize", () => {
     const b = estimateTxSize(3, 3);
     // 2 extra inputs + 2 extra outputs = 2*148 + 2*34 = 364 bytes
     expect(b - a).toBe(2 * 148 + 2 * 34);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildTransaction — P2SH-aware outputs
+// ---------------------------------------------------------------------------
+
+describe("buildTransaction — P2SH-aware outputs (multisig-ready)", () => {
+  test("paying a P2SH (multisig) recipient emits a P2SH scriptPubKey, not P2PKH", () => {
+    const { utxo, senderAddr } = getFixtures();
+    // Real 2-of-3 multisig mainnet address (see multisig-script.test.ts for
+    // the redeem script it was derived from).
+    const multisigRecipient = "7iKBxUNbBbTa8n1Q32oLucmvmKL7c572P2";
+
+    const tx = buildTransaction({
+      utxos: [utxo],
+      recipients: [{ address: multisigRecipient, value: 500_000_000n }],
+      changeAddress: senderAddr,
+      feePerByte: 10n,
+      network: MAINNET,
+    });
+
+    const recipientOutput = tx.outputs[0];
+    expect(isP2SHScript(recipientOutput.scriptPubKey)).toBe(true);
+    expect(bytesToHex(recipientOutput.scriptPubKey)).toBe(
+      "a914ae79902ae33900b679c76ced8576362e4abb15e887",
+    );
+    // The pre-fix behaviour would have produced this P2PKH-shaped script,
+    // which pays a hash with NO matching private key -- funds sent that way
+    // would be permanently unspendable. Guard against regressing to it.
+    expect(bytesToHex(recipientOutput.scriptPubKey)).not.toBe(
+      "76a914ae79902ae33900b679c76ced8576362e4abb15e888ac",
+    );
+  });
+
+  test("change still goes to a P2PKH scriptPubKey for a normal single-key change address", () => {
+    const { utxo, senderAddr } = getFixtures();
+    const tx = buildTransaction({
+      utxos: [utxo],
+      recipients: [{ address: senderAddr, value: 100_000_000n }],
+      changeAddress: senderAddr,
+      feePerByte: 10n,
+      network: MAINNET,
+    });
+    const changeOutput = tx.outputs[tx.outputs.length - 1];
+    expect(isP2PKHScript(changeOutput.scriptPubKey)).toBe(true);
   });
 });

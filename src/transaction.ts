@@ -11,10 +11,9 @@ import {
   BufferReader,
   bytesToHex,
   hexToBytes,
-  decodeAddress,
 } from "./encoding.js";
 import type { NetworkConfig } from "./network.js";
-import { createP2PKHScript, createP2PKHScriptSig } from "./script.js";
+import { createP2PKHScriptSig, scriptForAddress } from "./script.js";
 import { SMALLEST_UNIT_NAME } from "./branding.js";
 
 // Configure @noble/secp256k1 v2 HMAC for synchronous signing
@@ -349,23 +348,19 @@ export function buildTransaction(
   }
 
   // Build outputs for recipients
-  const outputs: TxOutput[] = recipients.map((recipient) => {
-    const { hash } = parseAddressToHash160(recipient.address);
-    return {
-      value: recipient.value,
-      scriptPubKey: createP2PKHScript(hash),
-    };
-  });
+  const outputs: TxOutput[] = recipients.map((recipient) => ({
+    value: recipient.value,
+    scriptPubKey: scriptForAddress(recipient.address, network),
+  }));
 
   // Determine if we need a change output
   const changeAmount = totalIn - totalOut - feeWithChange;
   const dustThreshold = network.minRelayFee;
 
   if (changeAmount > dustThreshold) {
-    const { hash: changeHash } = parseAddressToHash160(changeAddress);
     outputs.push({
       value: changeAmount,
-      scriptPubKey: createP2PKHScript(changeHash),
+      scriptPubKey: scriptForAddress(changeAddress, network),
     });
   }
 
@@ -383,15 +378,4 @@ export function buildTransaction(
     outputs,
     lockTime: 0,
   };
-}
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-function parseAddressToHash160(
-  address: string,
-): { version: number; hash: Uint8Array } {
-  const decoded = decodeAddress(address);
-  return { version: decoded.version, hash: decoded.hash };
 }

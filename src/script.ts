@@ -2,7 +2,7 @@
  * Bitcoin-compatible script construction and parsing for FairCoin.
  */
 
-import { encodeAddress } from "./encoding.js";
+import { decodeAddress, encodeAddress } from "./encoding.js";
 import type { NetworkConfig } from "./network.js";
 
 // ---------------------------------------------------------------------------
@@ -159,6 +159,26 @@ export function createP2PKHScriptSig(
   result.set(sigPush, 0);
   result.set(pkPush, sigPush.length);
   return result;
+}
+
+/**
+ * Build the correct scriptPubKey for an address: P2SH if the address's
+ * version byte matches the network's script-hash version, P2PKH if it
+ * matches the pubkey-hash version. Used by transaction builders so a
+ * multisig (P2SH) address is paid correctly instead of being mistaken for
+ * a single-key destination.
+ */
+export function scriptForAddress(address: string, network: NetworkConfig): Uint8Array {
+  const decoded = decodeAddress(address);
+  if (decoded.version === network.scriptHash) {
+    return createP2SHScript(decoded.hash);
+  }
+  if (decoded.version === network.pubKeyHash) {
+    return createP2PKHScript(decoded.hash);
+  }
+  throw new Error(
+    `Address ${address} does not match network ${network.name} (version byte ${decoded.version})`,
+  );
 }
 
 // ---------------------------------------------------------------------------
