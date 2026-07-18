@@ -162,3 +162,10 @@ export {
   formatFair,
   parseFairToUnits,
 } from "./format-amount.js";
+
+export {
+  deriveSocialReceiveAddress,
+  deriveSocialReceiveSpendingKey,
+  publicKeyFromPrivateKey,
+  MAX_SOCIAL_RECEIVE_INDEX,
+} from "./social-receive.js";
