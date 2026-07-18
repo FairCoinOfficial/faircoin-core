@@ -3,9 +3,17 @@ import { describe, test, expect } from "bun:test";
 import { hexToBytes, bytesToHex } from "../src/encoding.js";
 import { hash160 } from "../src/address.js";
 import { createP2PKHScript } from "../src/script.js";
-import type { Transaction } from "../src/transaction.js";
+import { serializeTransaction, type Transaction } from "../src/transaction.js";
 import { createMultisigRedeemScript } from "../src/multisig-script.js";
-import { computeMultisigSigHash, signMultisigInput } from "../src/multisig-sign.js";
+import {
+  computeMultisigSigHash,
+  signMultisigInput,
+  assembleMultisigScriptSig,
+  serializeMultisigSigningRequest,
+  deserializeMultisigSigningRequest,
+  type PartialSignature,
+  type MultisigSigningRequest,
+} from "../src/multisig-sign.js";
 
 // Same fixed keys as multisig-script.test.ts.
 const PUB1 = hexToBytes("031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f");
@@ -57,7 +65,7 @@ describe("signMultisigInput", () => {
     expect(bytesToHex(sig)).toBe(
       "3045022100a75e0470f26695564c7d7532dad3aeac6845280a5a10f135b32525752c7bbbc4022045a7fd3af5b2776c6e23f13b30cdec93504942e00ee23e2dd2a2eff8497d629d01",
     );
-    expect(sig[sig.length - 1]).toBe(0x01); // trailing SIGHASH_ALL byte
+    expect(sig[sig.length - 1]).toBe(0x01);
   });
 
   test("signer 3 produces a different, also-deterministic signature", () => {
@@ -76,5 +84,90 @@ describe("signMultisigInput", () => {
   test("never returns anything resembling the private key (key-leak guard)", () => {
     const sig = signMultisigInput(fixtureTx(), 0, REDEEM_SCRIPT, PRIV1);
     expect(bytesToHex(sig)).not.toContain(bytesToHex(PRIV1));
+  });
+});
+
+describe("assembleMultisigScriptSig", () => {
+  test("produces the exact real finalized scriptSig (signers 1 and 3, in order)", () => {
+    const sig1: PartialSignature = {
+      pubkey: PUB1,
+      signature: signMultisigInput(fixtureTx(), 0, REDEEM_SCRIPT, PRIV1),
+    };
+    const sig3: PartialSignature = {
+      pubkey: PUB3,
+      signature: signMultisigInput(fixtureTx(), 0, REDEEM_SCRIPT, PRIV3),
+    };
+    const scriptSig = assembleMultisigScriptSig([sig1, sig3], REDEEM_SCRIPT);
+    expect(bytesToHex(scriptSig)).toBe(
+      "00483045022100a75e0470f26695564c7d7532dad3aeac6845280a5a10f135b32525752c7bbbc4022045a7fd3af5b2776c6e23f13b30cdec93504942e00ee23e2dd2a2eff8497d629d01473044022050837cdb7dafab46d59dc1385ae2716aedf2d0ff29ebfeebcfec4552da173ed002200fc8187898f3cc9fbde73fd781f93824820f21d4b30cc8859581788824175e75014c695221031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f21024d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d07662102531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe33753ae",
+    );
+    expect(scriptSig.length).toBe(253);
+    expect(scriptSig[0]).toBe(0x00); // mandatory OP_0 CHECKMULTISIG dummy element
+  });
+
+  test("reorders signatures given in the WRONG order to match the redeem script's pubkey order", () => {
+    const sig1: PartialSignature = {
+      pubkey: PUB1,
+      signature: signMultisigInput(fixtureTx(), 0, REDEEM_SCRIPT, PRIV1),
+    };
+    const sig3: PartialSignature = {
+      pubkey: PUB3,
+      signature: signMultisigInput(fixtureTx(), 0, REDEEM_SCRIPT, PRIV3),
+    };
+    // Signer 3's signature passed FIRST -- the result must still put signer
+    // 1 first, since PUB1 appears before PUB3 in the redeem script.
+    const reversedOrder = assembleMultisigScriptSig([sig3, sig1], REDEEM_SCRIPT);
+    const naturalOrder = assembleMultisigScriptSig([sig1, sig3], REDEEM_SCRIPT);
+    expect(bytesToHex(reversedOrder)).toBe(bytesToHex(naturalOrder));
+  });
+
+  test("rejects a signature whose pubkey is not part of the redeem script", () => {
+    const foreignSig: PartialSignature = {
+      pubkey: hexToBytes("02".repeat(33)),
+      signature: signMultisigInput(fixtureTx(), 0, REDEEM_SCRIPT, PRIV1),
+    };
+    expect(() => assembleMultisigScriptSig([foreignSig], REDEEM_SCRIPT)).toThrow(
+      /not part of this redeem script/,
+    );
+  });
+});
+
+describe("serializeMultisigSigningRequest / deserializeMultisigSigningRequest", () => {
+  test("round-trips through the real unsigned tx and matches the known wire hex", () => {
+    const request: MultisigSigningRequest = {
+      tx: fixtureTx(),
+      inputIndex: 0,
+      redeemScript: REDEEM_SCRIPT,
+    };
+    const serialized = serializeMultisigSigningRequest(request);
+    expect(serialized.txHex).toBe(
+      "0100000001aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0000000000ffffffff01a0c44a00000000001976a91479b000887626b294a914501a4cd226b58b23598388ac00000000",
+    );
+    expect(serialized.inputIndex).toBe(0);
+    expect(serialized.redeemScriptHex).toBe(bytesToHex(REDEEM_SCRIPT));
+
+    const deserialized = deserializeMultisigSigningRequest(serialized);
+    expect(bytesToHex(serializeTransaction(deserialized.tx))).toBe(
+      bytesToHex(serializeTransaction(request.tx)),
+    );
+    expect(deserialized.inputIndex).toBe(0);
+    expect(bytesToHex(deserialized.redeemScript)).toBe(bytesToHex(REDEEM_SCRIPT));
+  });
+
+  test("signing from a DESERIALIZED request matches signing the original directly", () => {
+    const request: MultisigSigningRequest = {
+      tx: fixtureTx(),
+      inputIndex: 0,
+      redeemScript: REDEEM_SCRIPT,
+    };
+    const roundTripped = deserializeMultisigSigningRequest(serializeMultisigSigningRequest(request));
+    const sigFromOriginal = signMultisigInput(request.tx, request.inputIndex, request.redeemScript, PRIV1);
+    const sigFromRoundTrip = signMultisigInput(
+      roundTripped.tx,
+      roundTripped.inputIndex,
+      roundTripped.redeemScript,
+      PRIV1,
+    );
+    expect(bytesToHex(sigFromRoundTrip)).toBe(bytesToHex(sigFromOriginal));
   });
 });
