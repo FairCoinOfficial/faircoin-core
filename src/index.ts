@@ -60,6 +60,11 @@ export {
 } from "./script.js";
 
 export {
+  createMultisigRedeemScript,
+  multisigAddress,
+} from "./multisig-script.js";
+
+export {
   type HDNode,
   type DerivedAddress,
   generateMnemonic,
