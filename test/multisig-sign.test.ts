@@ -8,6 +8,7 @@ import { createMultisigRedeemScript } from "../src/multisig-script.js";
 import {
   computeMultisigSigHash,
   signMultisigInput,
+  verifyPartialSignature,
   assembleMultisigScriptSig,
   serializeMultisigSigningRequest,
   deserializeMultisigSigningRequest,
@@ -193,5 +194,39 @@ describe("serializeMultisigSigningRequest / deserializeMultisigSigningRequest", 
       PRIV1,
     );
     expect(bytesToHex(sigFromRoundTrip)).toBe(bytesToHex(sigFromOriginal));
+  });
+});
+
+describe("verifyPartialSignature", () => {
+  test("a real signMultisigInput signature verifies TRUE against its matching pubkey", () => {
+    // The sighash signMultisigInput signs internally is the multisig sighash
+    // over this input -- verify against that exact digest.
+    const sighash = computeMultisigSigHash(fixtureTx(), 0, REDEEM_SCRIPT);
+    const sig1 = signMultisigInput(fixtureTx(), 0, REDEEM_SCRIPT, PRIV1);
+    expect(verifyPartialSignature(sig1, PUB1, sighash)).toBe(true);
+  });
+
+  test("that same signature verifies FALSE against a different cosigner's pubkey", () => {
+    // PUB1's genuine signature is not PUB2's signature, even though PUB2 is a
+    // real cosigner in this redeem script -- this is exactly the bad/mislabeled
+    // contribution a coordinator must reject at partial-sig collection.
+    const sighash = computeMultisigSigHash(fixtureTx(), 0, REDEEM_SCRIPT);
+    const sig1 = signMultisigInput(fixtureTx(), 0, REDEEM_SCRIPT, PRIV1);
+    expect(verifyPartialSignature(sig1, PUB2, sighash)).toBe(false);
+  });
+
+  test("random/garbage bytes verify FALSE without throwing", () => {
+    const sighash = computeMultisigSigHash(fixtureTx(), 0, REDEEM_SCRIPT);
+    // Non-DER noise (no 0x30 header), a truncated buffer, an empty buffer, and
+    // a structurally-valid DER whose r=s=1 is not a real signature -- every one
+    // must return false, and none may throw.
+    const nonDer = hexToBytes("de".repeat(72));
+    const truncated = hexToBytes("3006020101");
+    const empty = new Uint8Array(0);
+    const wellFormedButInvalid = hexToBytes("3006020101020101");
+    expect(verifyPartialSignature(nonDer, PUB1, sighash)).toBe(false);
+    expect(verifyPartialSignature(truncated, PUB1, sighash)).toBe(false);
+    expect(verifyPartialSignature(empty, PUB1, sighash)).toBe(false);
+    expect(verifyPartialSignature(wellFormedButInvalid, PUB1, sighash)).toBe(false);
   });
 });

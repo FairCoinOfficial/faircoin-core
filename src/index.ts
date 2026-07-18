@@ -69,6 +69,25 @@ export {
 } from "./multisig-script.js";
 
 export {
+  computeMultisigSigHash,
+  signMultisigInput,
+  verifyPartialSignature,
+  assembleMultisigScriptSig,
+  serializeMultisigSigningRequest,
+  deserializeMultisigSigningRequest,
+  type PartialSignature,
+  type MultisigSigningRequest,
+  type SerializedMultisigSigningRequest,
+} from "./multisig-sign.js";
+
+export {
+  buildMultisigSpend,
+  estimateMultisigInputSize,
+  estimateMultisigTxSize,
+  type BuildMultisigSpendParams,
+} from "./multisig-transaction.js";
+
+export {
   type HDNode,
   type DerivedAddress,
   generateMnemonic,

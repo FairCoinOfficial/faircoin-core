@@ -95,6 +95,83 @@ export function signMultisigInput(
   return sigWithHashType;
 }
 
+/**
+ * DER-decode an ECDSA signature into its `{ r, s }` scalars, tolerating (and
+ * discarding) exactly one trailing SIGHASH byte -- the shape
+ * `signMultisigInput` emits (`derEncodeSignature` output + one SIGHASH_ALL
+ * byte). Returns `null` for anything that is not a well-formed
+ * `0x30 <seqLen> 0x02 <rLen> <r> 0x02 <sLen> <s>` sequence rather than
+ * throwing, so the caller can map a bad signature straight to `false`.
+ * @noble/secp256k1 v2's `Signature` class is compact-only (no `fromDER`), so
+ * the DER is parsed here and handed to `verify` as an `{ r, s }` `SigLike`.
+ */
+function derDecodeEcdsaSignature(sig: Uint8Array): { r: bigint; s: bigint } | null {
+  // Shortest possible DER ECDSA sig is 8 bytes: 30 06 02 01 rr 02 01 ss.
+  if (sig.length < 8 || sig[0] !== 0x30) return null;
+
+  const seqLen = sig[1];
+  const derLen = 2 + seqLen;
+  // Accept the bare DER sequence, or that sequence plus exactly one trailing
+  // SIGHASH byte (what signMultisigInput appends). Any other trailing data
+  // means this is not a signature this primitive should accept.
+  if (sig.length !== derLen && sig.length !== derLen + 1) return null;
+
+  let offset = 2;
+  if (sig[offset] !== 0x02) return null;
+  const rLen = sig[offset + 1];
+  offset += 2;
+  if (rLen === 0 || offset + rLen > derLen) return null;
+  const rBytes = sig.slice(offset, offset + rLen);
+  offset += rLen;
+
+  if (sig[offset] !== 0x02) return null;
+  const sLen = sig[offset + 1];
+  offset += 2;
+  if (sLen === 0 || offset + sLen > derLen) return null;
+  const sBytes = sig.slice(offset, offset + sLen);
+  offset += sLen;
+
+  // r and s must consume the declared sequence EXACTLY -- no unread bytes
+  // inside the sequence, no overrun.
+  if (offset !== derLen) return null;
+
+  return {
+    r: secp256k1.etc.bytesToNumberBE(rBytes),
+    s: secp256k1.etc.bytesToNumberBE(sBytes),
+  };
+}
+
+/**
+ * Verify that `signature` is a valid ECDSA signature by `pubkey` over
+ * `sighash` -- the primitive a coordinator calls as it collects partial
+ * signatures, to reject a bad, foreign, or mislabeled contribution BEFORE it
+ * ever reaches `assembleMultisigScriptSig` (which is a pure serializer and
+ * does no cryptographic checking). `signature` is the exact bytes
+ * `signMultisigInput` returns: a DER signature followed by a SIGHASH byte,
+ * which `derDecodeEcdsaSignature` strips. Uses the same @noble/secp256k1 lib
+ * as signing, with its default `lowS: true` -- matching the low-S signatures
+ * `signMultisigInput` produces and what the network accepts at broadcast.
+ *
+ * Returns `false` (never throws) for any malformed, foreign, or garbage
+ * signature -- including a malformed pubkey or out-of-range scalars, which
+ * make the underlying `verify` throw. A coordinator validating untrusted
+ * contributions must get a clean boolean, never an exception.
+ */
+export function verifyPartialSignature(
+  signature: Uint8Array,
+  pubkey: Uint8Array,
+  sighash: Uint8Array,
+): boolean {
+  const decoded = derDecodeEcdsaSignature(signature);
+  if (decoded === null) return false;
+
+  try {
+    return secp256k1.verify(decoded, sighash, pubkey);
+  } catch {
+    return false;
+  }
+}
+
 /** One cosigner's signature for a specific input, paired with their pubkey. */
 export interface PartialSignature {
   pubkey: Uint8Array;
