@@ -92,6 +92,24 @@ describe("buildMultisigSpend", () => {
     expect(() => buildMultisigSpend({ ...baseParams, utxos: [] })).toThrow("No UTXOs provided");
   });
 
+  test("rejects a recipient value that exceeds the network's maxMoney", () => {
+    expect(() =>
+      buildMultisigSpend({
+        ...baseParams,
+        recipients: [{ address: PUB2_ADDRESS, value: MAINNET.maxMoney + 1n }],
+      }),
+    ).toThrow(/maximum money supply/);
+  });
+
+  test("rejects a recipient value that exceeds the uint64 range", () => {
+    expect(() =>
+      buildMultisigSpend({
+        ...baseParams,
+        recipients: [{ address: PUB2_ADDRESS, value: 2n ** 64n }],
+      }),
+    ).toThrow(/uint64/);
+  });
+
   test("throws when a UTXO's scriptPubKey does not match the redeem script's P2SH address", () => {
     // A UTXO locked by a DIFFERENT redeem script (a 1-of-3 of the same keys)
     // than baseParams.redeemScript (the 2-of-3). Signing against it would

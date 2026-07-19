@@ -305,6 +305,32 @@ describe("buildTransaction", () => {
       }),
     ).toThrow(/insufficient/i);
   });
+
+  test("throws when recipient value exceeds the network's maxMoney", () => {
+    const f = getFixtures();
+    expect(() =>
+      buildTransaction({
+        utxos: [f.utxo],
+        recipients: [{ address: f.recipientAddr, value: MAINNET.maxMoney + 1n }],
+        changeAddress: f.senderAddr,
+        feePerByte: 1n,
+        network: MAINNET,
+      }),
+    ).toThrow(/maximum money supply/);
+  });
+
+  test("throws when recipient value exceeds the uint64 range", () => {
+    const f = getFixtures();
+    expect(() =>
+      buildTransaction({
+        utxos: [f.utxo],
+        recipients: [{ address: f.recipientAddr, value: 2n ** 64n }],
+        changeAddress: f.senderAddr,
+        feePerByte: 1n,
+        network: MAINNET,
+      }),
+    ).toThrow(/uint64/);
+  });
 });
 
 // ---------------------------------------------------------------------------

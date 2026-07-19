@@ -295,6 +295,30 @@ export interface BuildTransactionParams {
 }
 
 /**
+ * Bound a single output value against consensus limits: must be positive,
+ * fit the tx wire format's unsigned 64-bit LE value field, and not exceed
+ * the network's total money supply cap (`network.maxMoney`, mirroring
+ * FairCoin's `nMaxMoneyOut` in chainparams.cpp). A value outside either
+ * bound can never appear in a valid, broadcastable FairCoin output, so
+ * building one is rejected here rather than left for the network to reject
+ * at broadcast. Shared by `buildTransaction` and `buildMultisigSpend`
+ * (multisig-transaction.ts) so both apply the identical bound.
+ */
+export function assertValidOutputValue(value: bigint, network: NetworkConfig): void {
+  if (value <= 0n) {
+    throw new Error("Recipient value must be positive");
+  }
+  if (value >= 2n ** 64n) {
+    throw new Error(`Recipient value ${value} exceeds the uint64 range of a serialized output`);
+  }
+  if (value > network.maxMoney) {
+    throw new Error(
+      `Recipient value ${value} exceeds the network's maximum money supply (${network.maxMoney})`,
+    );
+  }
+}
+
+/**
  * Build an unsigned transaction with coin selection and change output.
  *
  * Uses a simple "use all provided UTXOs" strategy. The caller is expected
@@ -322,10 +346,13 @@ export function buildTransaction(
   // Calculate total output value
   let totalOut = 0n;
   for (const recipient of recipients) {
-    if (recipient.value <= 0n) {
-      throw new Error("Recipient value must be positive");
-    }
+    assertValidOutputValue(recipient.value, network);
     totalOut += recipient.value;
+  }
+  if (totalOut > network.maxMoney) {
+    throw new Error(
+      `Total output value ${totalOut} exceeds the network's maximum money supply (${network.maxMoney})`,
+    );
   }
 
   // Estimate fee with a potential change output

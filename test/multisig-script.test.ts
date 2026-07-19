@@ -2,7 +2,11 @@ import { describe, test, expect } from "bun:test";
 
 import { hexToBytes, bytesToHex } from "../src/encoding.js";
 import { MAINNET, TESTNET } from "../src/network.js";
-import { createMultisigRedeemScript, multisigAddress } from "../src/multisig-script.js";
+import {
+  createMultisigRedeemScript,
+  multisigAddress,
+  parseMultisigRedeemScript,
+} from "../src/multisig-script.js";
 
 // Fixed, reproducible secp256k1 compressed public keys, derived from private
 // keys 0x01/0x02/0x03 repeated to 32 bytes via @noble/secp256k1 (this
@@ -50,6 +54,26 @@ describe("createMultisigRedeemScript", () => {
   test("rejects an invalid public key length", () => {
     expect(() => createMultisigRedeemScript(1, [new Uint8Array(20)])).toThrow(
       /Invalid public key length/,
+    );
+  });
+});
+
+describe("parseMultisigRedeemScript", () => {
+  test("round-trips m and pubkeys through createMultisigRedeemScript", () => {
+    const script = createMultisigRedeemScript(2, [PUB1, PUB2, PUB3]);
+    const parsed = parseMultisigRedeemScript(script);
+    expect(parsed.m).toBe(2);
+    expect(parsed.pubkeys.map(bytesToHex)).toEqual([PUB1, PUB2, PUB3].map(bytesToHex));
+  });
+
+  test("rejects a pubkey push that is not 33 (compressed) or 65 (uncompressed) bytes", () => {
+    // Hand-crafted OP_1 <20-byte push> OP_1 OP_CHECKMULTISIG -- a script
+    // createMultisigRedeemScript itself would refuse to build, simulating an
+    // attacker-crafted or corrupted redeem script reaching the parser
+    // directly (e.g. imported from an untrusted watch-address or QR code).
+    const malformed = hexToBytes("5114" + "00".repeat(20) + "51ae");
+    expect(() => parseMultisigRedeemScript(malformed)).toThrow(
+      /33 \(compressed\) or 65 \(uncompressed\)/,
     );
   });
 });

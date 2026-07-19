@@ -12,7 +12,7 @@ import {
   hexToBytes,
   bytesToHex,
 } from "./encoding.js";
-import type { NetworkConfig } from "./network.js";
+import { MAINNET, TESTNET, type NetworkConfig } from "./network.js";
 import { Opcodes } from "./script.js";
 
 /**
@@ -48,26 +48,16 @@ export function addressToScriptHash(address: string): Uint8Array {
   const decoded = decodeAddress(address);
   let script: Uint8Array;
 
-  // Build the scriptPubKey depending on version
+  // Build the scriptPubKey depending on version.
   // P2PKH: OP_DUP OP_HASH160 <20-byte hash> OP_EQUALVERIFY OP_CHECKSIG
   // P2SH:  OP_HASH160 <20-byte hash> OP_EQUAL
-  // We determine type by the hash length (always 20) and build both patterns.
-  // For a generic approach, we can look at version bytes but we don't have the
-  // network config here. Since both P2PKH and P2SH have 20-byte hashes, we
-  // use a heuristic: try to match known version ranges.
-  // However, the safe approach is to build the standard P2PKH script since
-  // most FairCoin addresses are P2PKH.
-  // For correctness, we build the script for the decoded version.
+  // The address doesn't carry which network it belongs to, so we can't take
+  // a NetworkConfig parameter here -- instead we recognize a P2SH version
+  // byte against BOTH networks' configs (the single source of truth for
+  // FairCoin's version bytes, network.ts), which is safe because FairCoin's
+  // only two networks have no pubKeyHash/scriptHash byte collisions.
   const hash = decoded.hash;
-
-  // We don't know exactly which version is P2PKH vs P2SH without the network
-  // config, so we look at standard Bitcoin-derived ranges:
-  // P2PKH versions are typically used for single-key addresses.
-  // P2SH versions are for multi-sig / script addresses.
-  // FairCoin mainnet: pubKeyHash=35, scriptHash=16
-  // FairCoin testnet: pubKeyHash=65, scriptHash=12
-  // To handle both, we check against known values.
-  const P2SH_VERSIONS = new Set([16, 12]);
+  const P2SH_VERSIONS = new Set([MAINNET.scriptHash, TESTNET.scriptHash]);
 
   if (P2SH_VERSIONS.has(decoded.version)) {
     // OP_HASH160 <20 bytes> OP_EQUAL

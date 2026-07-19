@@ -34,6 +34,12 @@ export interface NetworkConfig {
   readonly coinbaseMaturity: number;
   readonly maxBlockSize: number;
   readonly targetSpacing: number;
+  /**
+   * Total money supply cap in base units, mirroring `nMaxMoneyOut` in
+   * FairCoin's `chainparams.cpp` (`33000000 * COIN`, both mainnet and
+   * testnet). Enforced on output values by `assertValidOutputValue`
+   * (transaction.ts), shared by `buildTransaction` and `buildMultisigSpend`.
+   */
   readonly maxMoney: bigint;
   readonly coin: bigint;
   readonly masternodeCollateral: bigint;

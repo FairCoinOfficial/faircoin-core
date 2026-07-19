@@ -131,6 +131,16 @@ export function parseMultisigRedeemScript(redeemScript: Uint8Array): ParsedMulti
     if (len === 0 || len >= Opcodes.OP_PUSHDATA1) {
       throw new Error("Malformed multisig redeem script: expected a pubkey push");
     }
+    // A multisig cosigner is a secp256k1 EC point: 33 bytes compressed
+    // (0x02/0x03 prefix) or 65 bytes uncompressed (0x04 prefix). Any other
+    // push length can only come from an attacker-crafted or corrupted
+    // script -- createMultisigRedeemScript never produces one -- so reject
+    // it here rather than silently parsing garbage as a "pubkey".
+    if (len !== 33 && len !== 65) {
+      throw new Error(
+        `Malformed multisig redeem script: pubkey push must be 33 (compressed) or 65 (uncompressed) bytes, got ${len}`,
+      );
+    }
     if (offset + 1 + len > redeemScript.length) {
       throw new Error("Malformed multisig redeem script: truncated pubkey push");
     }

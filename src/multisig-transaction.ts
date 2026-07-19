@@ -11,6 +11,7 @@ import { readMultisigThreshold } from "./multisig-script.js";
 import type { NetworkConfig } from "./network.js";
 import { createP2SHScript, scriptForAddress } from "./script.js";
 import { SMALLEST_UNIT_NAME } from "./branding.js";
+import { assertValidOutputValue } from "./transaction.js";
 import type { Transaction, TxInput, TxOutput, UTXO } from "./transaction.js";
 
 const TX_OVERHEAD = 10; // version(4) + vin count(~1) + vout count(~1) + locktime(4)
@@ -129,10 +130,13 @@ export function buildMultisigSpend(params: BuildMultisigSpendParams): Transactio
 
   let totalOut = 0n;
   for (const recipient of recipients) {
-    if (recipient.value <= 0n) {
-      throw new Error("Recipient value must be positive");
-    }
+    assertValidOutputValue(recipient.value, network);
     totalOut += recipient.value;
+  }
+  if (totalOut > network.maxMoney) {
+    throw new Error(
+      `Total output value ${totalOut} exceeds the network's maximum money supply (${network.maxMoney})`,
+    );
   }
 
   const sizeWithChange = estimateMultisigTxSize(

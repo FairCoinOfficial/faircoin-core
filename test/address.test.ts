@@ -24,8 +24,11 @@ import {
   reverseHex,
   validateAddress,
 } from "../src/address.js";
+import { sha256 } from "@noble/hashes/sha256";
+
 import { bytesToHex, decodeAddress, encodeAddress, hexToBytes } from "../src/encoding.js";
 import { MAINNET, TESTNET } from "../src/network.js";
+import { Opcodes } from "../src/script.js";
 
 // ---------------------------------------------------------------------------
 // Known test vectors (from secp256k1 generator point G)
@@ -208,6 +211,25 @@ describe("addressToScriptHash", () => {
     const p2shAddr = encodeAddress(hash, MAINNET.scriptHash);
     const sh = addressToScriptHash(p2shAddr);
     expect(sh.length).toBe(32);
+  });
+
+  test("resolves the P2SH branch from network config for BOTH mainnet and testnet script-hash versions", () => {
+    // Builds the expected P2SH scriptPubKey by hand and hashes it, so this
+    // fails if the P2SH-vs-P2PKH branch is ever driven by a version byte
+    // other than MAINNET.scriptHash / TESTNET.scriptHash (e.g. a stale
+    // hardcoded literal that silently stops tracking the network configs).
+    const hash = hexToBytes("0102030405060708090a0b0c0d0e0f1011121314");
+    const expectedScript = new Uint8Array(23);
+    expectedScript[0] = Opcodes.OP_HASH160;
+    expectedScript[1] = 0x14;
+    expectedScript.set(hash, 2);
+    expectedScript[22] = Opcodes.OP_EQUAL;
+    const expected = bytesToHex(sha256(expectedScript));
+
+    const mainnetAddr = encodeAddress(hash, MAINNET.scriptHash);
+    const testnetAddr = encodeAddress(hash, TESTNET.scriptHash);
+    expect(bytesToHex(addressToScriptHash(mainnetAddr))).toBe(expected);
+    expect(bytesToHex(addressToScriptHash(testnetAddr))).toBe(expected);
   });
 });
 
