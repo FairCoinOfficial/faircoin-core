@@ -8,12 +8,11 @@
  * BLAKE-512 for @noble/hashes/blake1 — the tests now pass and act as a
  * regression guard against the bug re-appearing.
  *
- * NOTE: Quark also chains custom implementations of BMW-512, Groestl-512,
- * JH-512, Skein-512, and Keccak-512. Only Keccak is vendored from
- * @noble/hashes; the rest are pure-TS ports that have not been verified
- * against the reference C implementation. These tests prove that the
- * algorithm is input-sensitive and data-deterministic, but they do NOT
- * prove the output matches the FairCoin C reference. See SPV_AUDIT.md.
+ * NOTE: the tests in THIS file only prove the algorithm is input-sensitive and
+ * data-deterministic — properties a completely wrong hash satisfies too, which
+ * is how the 0.2.0 Groestl/BMW regression shipped unnoticed. Correctness
+ * against the FairCoin C reference is pinned by the real mainnet block vectors
+ * in `quark-mainnet-vectors.test.ts`; add new coverage there, not here.
  */
 
 import { describe, test, expect } from "bun:test";
