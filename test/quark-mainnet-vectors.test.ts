@@ -30,6 +30,8 @@ import { describe, test, expect } from "bun:test";
 
 import { bytesToHex, hexToBytes } from "../src/encoding.js";
 import { hashBlockHeader, type BlockHeader } from "../src/quark-hash.js";
+import { compactToTarget, hashToUint256, meetsProofOfWork } from "../src/proof-of-work.js";
+import { getNetwork } from "../src/network.js";
 
 interface MainnetVector {
   readonly height: number;
@@ -82,25 +84,6 @@ const POS_VECTORS: readonly MainnetVector[] = [
 
 const ALL_VECTORS = [...POW_VECTORS, ...POS_VECTORS];
 
-// `uint256::SetCompact` — the difficulty target encoded in nBits.
-function compactToTarget(bits: number): bigint {
-  const size = (bits >>> 24) & 0xff;
-  const word = BigInt(bits & 0x007fffff);
-  const mask = (1n << 256n) - 1n;
-  return size <= 3
-    ? word >> BigInt(8 * (3 - size))
-    : (word << BigInt(8 * (size - 3))) & mask;
-}
-
-/** Internal byte order is little-endian: byte 0 is least significant. */
-function hashValue(hash: Uint8Array): bigint {
-  let value = 0n;
-  for (let i = hash.length - 1; i >= 0; i--) {
-    value = (value << 8n) | BigInt(hash[i]);
-  }
-  return value;
-}
-
 describe("hashBlockHeader — mainnet vectors", () => {
   for (const v of ALL_VECTORS) {
     test(`block ${v.height} hashes to its canonical id`, () => {
@@ -120,7 +103,7 @@ describe("proof of work confirms the hashes independently", () => {
   for (const v of POW_VECTORS) {
     test(`block ${v.height} satisfies its difficulty target`, () => {
       const hash = hashBlockHeader(v.header);
-      expect(hashValue(hash)).toBeLessThanOrEqual(compactToTarget(v.bits));
+      expect(hashToUint256(hash)).toBeLessThanOrEqual(compactToTarget(v.bits).target);
     });
   }
 
@@ -130,6 +113,26 @@ describe("proof of work confirms the hashes independently", () => {
       ...v.header,
       nonce: v.header.nonce ^ 1,
     });
-    expect(hashValue(tampered)).toBeGreaterThan(compactToTarget(v.bits));
+    expect(meetsProofOfWork(tampered, v.bits)).toBe(false);
+  });
+});
+
+describe("lastPowBlock matches where the work actually stops", () => {
+  const { lastPowBlock } = getNetwork("mainnet");
+
+  test("every PoW-era vector is at or below it and meets its target", () => {
+    for (const v of POW_VECTORS) {
+      expect(v.height).toBeLessThanOrEqual(lastPowBlock);
+      expect(meetsProofOfWork(hashBlockHeader(v.header), v.bits)).toBe(true);
+    }
+  });
+
+  test("every PoS-era vector is above it and meets no target", () => {
+    // If `lastPowBlock` were ever raised past a real PoS block, the wallet
+    // would start rejecting the live chain. This pins the boundary to data.
+    for (const v of POS_VECTORS) {
+      expect(v.height).toBeGreaterThan(lastPowBlock);
+      expect(meetsProofOfWork(hashBlockHeader(v.header), v.bits)).toBe(false);
+    }
   });
 });

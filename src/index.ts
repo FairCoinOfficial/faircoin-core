@@ -138,6 +138,14 @@ export {
 } from "./checkpoints.js";
 
 export {
+  type CompactTarget,
+  compactToTarget,
+  isValidTargetBits,
+  hashToUint256,
+  meetsProofOfWork,
+} from "./proof-of-work.js";
+
+export {
   type FairCoinURI,
   parseFairCoinURI,
   buildFairCoinURI,

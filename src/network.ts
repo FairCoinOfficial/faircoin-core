@@ -45,7 +45,23 @@ export interface NetworkConfig {
   readonly masternodeCollateral: bigint;
   readonly minRelayFee: bigint;
   readonly maxReorgDepth: number;
+  /**
+   * `Params().LAST_POW_BLOCK()` from `chainparams.cpp`. FairCoin is hybrid
+   * PoW/PoS: at or below this height `main.cpp` rejects proof-of-stake blocks,
+   * so every block is provably proof-of-work and `quarkHash <= target` can be
+   * verified. Above it there is no work to check.
+   */
+  readonly lastPowBlock: number;
+  /**
+   * `Params().ProofOfWorkLimit()` — the easiest allowed target as a 256-bit
+   * value. Mainnet and testnet both use `~uint256(0) >> 20`; only regtest
+   * differs and this package does not target it.
+   */
+  readonly powLimit: bigint;
 }
+
+/** `~uint256(0) >> 20`, shared by mainnet and testnet. */
+const POW_LIMIT = ((1n << 256n) - 1n) >> 20n;
 
 export const MAINNET: NetworkConfig = {
   name: "mainnet",
@@ -78,6 +94,8 @@ export const MAINNET: NetworkConfig = {
   masternodeCollateral: 5_000n * COIN,
   minRelayFee: 10_000n,
   maxReorgDepth: 100,
+  lastPowBlock: 10_000,
+  powLimit: POW_LIMIT,
 } as const;
 
 export const TESTNET: NetworkConfig = {
@@ -111,6 +129,8 @@ export const TESTNET: NetworkConfig = {
   masternodeCollateral: 5_000n * COIN,
   minRelayFee: 10_000n,
   maxReorgDepth: 100,
+  lastPowBlock: 200,
+  powLimit: POW_LIMIT,
 } as const;
 
 const NETWORKS: Record<NetworkType, NetworkConfig> = {
